@@ -4,4 +4,4 @@
  * Receives structured steps, executes them, captures artifacts.
  */
 
-export {};
+export { resolveSelector, describeSelector, SelectorError } from './selectors.js';
