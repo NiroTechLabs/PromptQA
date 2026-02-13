@@ -4,4 +4,5 @@
  * Zod-validated. No defaults leak — everything explicit.
  */
 
-export {};
+export { TIMEOUTS, LIMITS, TOKEN_GUARDS } from './defaults.js';
+export { loadConfigFile } from './loader.js';

@@ -7,9 +7,12 @@ import { parse as parseYaml } from 'yaml';
 import type { RunSummary } from '../schema/index.js';
 import type { CookieParam } from '../browser/runner.js';
 import { createLLMClient, loadLLMConfig } from '../llm/index.js';
+import type { LLMConfig } from '../llm/index.js';
 import { runAgentLoop } from '../core/agentLoop.js';
-import { generateMarkdown, generateJSON } from '../report/reporter.js';
+import { generateMarkdown, generateJSON, serializeJSON } from '../report/reporter.js';
 import { LIMITS, TIMEOUTS } from '../config/defaults.js';
+import { loadConfigFile as loadValidatedConfig } from '../config/loader.js';
+import type { FileConfig as ValidatedFileConfig } from '../schema/config.js';
 
 // ── Config file shape ────────────────────────────────────────
 
@@ -179,8 +182,8 @@ export function registerTestCommand(program: Command): void {
 
           // 7. JSON to stdout if --json
           if (opts.json) {
-            const json = generateJSON(summary);
-            process.stdout.write(JSON.stringify(json, null, 2) + '\n');
+            const json = generateJSON(summary, exitCode);
+            process.stdout.write(serializeJSON(json) + '\n');
           }
 
           // 8. Summary to stderr always
@@ -194,6 +197,147 @@ export function registerTestCommand(program: Command): void {
           process.stderr.write(`Error: ${message}\n`);
           process.exitCode = 4;
         }
+      },
+    );
+}
+
+// ── Run command (config-driven multi-test) ──────────────────
+
+export function registerRunCommand(program: Command): void {
+  program
+    .command('run')
+    .description('Run tests defined in a .promptqa.yaml config file')
+    .option(
+      '--config <path>',
+      'Path to config file',
+      '.promptqa.yaml',
+    )
+    .option('--test <name>', 'Run a single test by name')
+    .option('--json', 'Output JSON to stdout')
+    .option('--report-path <dir>', 'Custom artifact directory')
+    .option('--max-steps <n>', 'Override max steps')
+    .option('--headless', 'Run browser headless')
+    .option('--timeout <seconds>', 'Total run timeout in seconds')
+    .option('--cookie <string>', 'Pre-authenticated cookie string')
+    .option(
+      '--login-prompt <prompt>',
+      'Login prompt to execute before test',
+    )
+    .action(
+      async (opts: {
+        config: string;
+        test?: string;
+        json?: true;
+        reportPath?: string;
+        maxSteps?: string;
+        headless?: true;
+        timeout?: string;
+        cookie?: string;
+        loginPrompt?: string;
+      }) => {
+        let config: ValidatedFileConfig;
+        try {
+          config = await loadValidatedConfig(opts.config);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : String(err);
+          process.stderr.write(`Config error: ${message}\n`);
+          process.exitCode = 4;
+          return;
+        }
+
+        // Filter to single test if --test specified
+        const tests =
+          opts.test !== undefined
+            ? config.tests.filter((t) => t.name === opts.test)
+            : config.tests;
+
+        if (tests.length === 0) {
+          process.stderr.write(
+            opts.test !== undefined
+              ? `No test named "${opts.test}" found in config\n`
+              : 'No tests defined in config\n',
+          );
+          process.exitCode = 4;
+          return;
+        }
+
+        // Merge: CLI flags override config values
+        const headless = opts.headless ?? config.headless;
+        const maxSteps =
+          opts.maxSteps !== undefined
+            ? Number(opts.maxSteps)
+            : config.maxSteps;
+        const timeoutSec =
+          opts.timeout !== undefined
+            ? Number(opts.timeout)
+            : config.timeout;
+        const cookieString = opts.cookie ?? config.auth?.cookie;
+        const loginPrompt = opts.loginPrompt ?? config.auth?.loginPrompt;
+
+        // Build LLM client — config provider/model override env
+        const envConfig = loadLLMConfig();
+        const llmConfig: LLMConfig = {
+          provider: config.provider ?? envConfig.provider,
+          apiKey: envConfig.apiKey,
+          model: config.model ?? envConfig.model,
+        };
+        const client = createLLMClient(llmConfig);
+
+        let worstExitCode = 0;
+
+        for (const test of tests) {
+          const testUrl = test.url ?? config.baseUrl;
+          const reportDir = opts.reportPath ?? '.artifacts';
+          const outputDir = path.resolve(reportDir, test.name);
+
+          const cookies =
+            cookieString !== undefined
+              ? parseCookies(cookieString, testUrl)
+              : undefined;
+
+          process.stderr.write(`\nRunning test: ${test.name}\n`);
+
+          try {
+            const { summary, exitCode } = await runAgentLoop(client, {
+              url: testUrl,
+              prompt: test.prompt,
+              headless,
+              outputDir,
+              maxSteps,
+              totalTimeout: timeoutSec * 1000,
+              ...(cookies !== undefined ? { cookies } : {}),
+              ...(loginPrompt !== undefined ? { loginPrompt } : {}),
+            });
+
+            // Write markdown report
+            const markdown = generateMarkdown(summary);
+            await writeFile(
+              path.join(outputDir, 'report.md'),
+              markdown,
+              'utf-8',
+            );
+
+            // JSON to stdout if --json
+            if (opts.json) {
+              const json = generateJSON(summary, exitCode);
+              process.stdout.write(serializeJSON(json) + '\n');
+            }
+
+            printSummary(summary);
+
+            if (exitCode > worstExitCode) {
+              worstExitCode = exitCode;
+            }
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : String(err);
+            process.stderr.write(`Error [${test.name}]: ${message}\n`);
+            worstExitCode = 4;
+          }
+        }
+
+        process.exitCode = worstExitCode;
       },
     );
 }

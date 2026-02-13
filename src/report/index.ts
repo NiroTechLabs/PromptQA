@@ -4,5 +4,5 @@
  * Transforms evaluated results into markdown + JSON artifacts.
  */
 
-export { generateMarkdown, generateJSON } from './reporter.js';
-export type { SummaryJSON, SummaryStepJSON } from './reporter.js';
+export { generateMarkdown, generateJSON, serializeJSON } from './reporter.js';
+export type { JsonOutput, JsonOutputStep, JsonOutputBug } from './reporter.js';

@@ -8,7 +8,7 @@
 import 'dotenv/config';
 import { Command } from 'commander';
 
-import { registerTestCommand } from './run.js';
+import { registerTestCommand, registerRunCommand } from './run.js';
 
 const program = new Command();
 
@@ -20,5 +20,6 @@ program
   .version('0.1.0');
 
 registerTestCommand(program);
+registerRunCommand(program);
 
 program.parse();

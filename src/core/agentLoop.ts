@@ -15,6 +15,7 @@ import { TIMEOUTS, LIMITS } from '../config/defaults.js';
 import type { CookieParam } from '../browser/runner.js';
 import { launchSession } from '../browser/runner.js';
 import { prescanPage } from '../browser/prescan.js';
+import { generateJSON, serializeJSON } from '../report/reporter.js';
 import { planSteps, PlannerError } from './planner.js';
 import { evaluateStep, detectHardFail } from './evaluator.js';
 
@@ -287,13 +288,14 @@ export async function runAgentLoop(
       bugs,
     };
 
-    // Write final summary artifact
+    const exitCode = verdict === 'PASS' ? 0 : verdict === 'FAIL' ? 1 : 2;
+
+    // Write contract-format summary.json (sorted keys, stable output)
+    const jsonOutput = generateJSON(summary, exitCode);
     const summaryPath = path.join(config.outputDir, 'summary.json');
-    await writeFile(summaryPath, JSON.stringify(summary, null, 2), 'utf-8').catch(
+    await writeFile(summaryPath, serializeJSON(jsonOutput) + '\n', 'utf-8').catch(
       () => {},
     );
-
-    const exitCode = verdict === 'PASS' ? 0 : verdict === 'FAIL' ? 1 : 2;
 
     return { summary, exitCode };
   } finally {

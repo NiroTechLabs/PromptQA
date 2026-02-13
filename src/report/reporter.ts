@@ -2,48 +2,42 @@ import type {
   RunSummary,
   StepExecutionResult,
   EvaluationVerdict,
-  BugReport,
 } from '../schema/index.js';
+import {
+  JSON_OUTPUT_VERSION,
+} from '../schema/jsonOutput.js';
+import type {
+  JsonOutput,
+  JsonOutputStep,
+  JsonOutputBug,
+} from '../schema/jsonOutput.js';
 
-// ── JSON output shape ────────────────────────────────────────
-
-export interface SummaryStepJSON {
-  index: number;
-  description: string;
-  result: EvaluationVerdict;
-  confidence: number;
-  reason: string;
-  screenshotPath: string;
-  errors: string[];
-}
-
-export interface SummaryJSON {
-  summary: EvaluationVerdict;
-  runId: string;
-  url: string;
-  prompt: string;
-  durationMs: number;
-  steps: SummaryStepJSON[];
-  bugs: BugReport[];
-}
+// Re-export contract types for consumers
+export type { JsonOutput, JsonOutputStep, JsonOutputBug };
 
 // ── JSON generator ───────────────────────────────────────────
 
-export function generateJSON(run: RunSummary): SummaryJSON {
+export function generateJSON(
+  run: RunSummary,
+  exitCode: number,
+): JsonOutput {
   return {
+    version: JSON_OUTPUT_VERSION,
     summary: run.summary,
     runId: run.runId,
     url: run.url,
     prompt: run.prompt,
     durationMs: run.durationMs,
+    exitCode,
     steps: run.steps.map(stepToJSON),
-    bugs: run.bugs,
+    bugs: run.bugs.map(bugToJSON),
   };
 }
 
-function stepToJSON(sr: StepExecutionResult): SummaryStepJSON {
+function stepToJSON(sr: StepExecutionResult): JsonOutputStep {
   return {
     index: sr.stepIndex,
+    type: sr.step.type,
     description: sr.step.description,
     result: sr.evaluation?.result ?? (sr.success ? 'PASS' : 'FAIL'),
     confidence: sr.evaluation?.confidence ?? 0,
@@ -51,6 +45,33 @@ function stepToJSON(sr: StepExecutionResult): SummaryStepJSON {
     screenshotPath: sr.screenshotPath,
     errors: collectErrors(sr),
   };
+}
+
+function bugToJSON(bug: RunSummary['bugs'][number]): JsonOutputBug {
+  return {
+    stepIndex: bug.stepIndex,
+    description: bug.description,
+    severity: bug.severity,
+    evidence: bug.evidence,
+  };
+}
+
+// ── Deterministic serialization ─────────────────────────────
+// Keys are sorted lexicographically for stable, diffable output.
+
+export function serializeJSON(output: JsonOutput): string {
+  return JSON.stringify(output, sortedReplacer, 2);
+}
+
+function sortedReplacer(_key: string, value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[k] = (value as Record<string, unknown>)[k];
+  }
+  return sorted;
 }
 
 // ── Markdown generator ───────────────────────────────────────
