@@ -84,7 +84,11 @@ examples/         # Example test configs
 
 ## Environment Variables
 ```
-LLM_PROVIDER=openai    # or "mock" for testing
+ANTHROPIC_API_KEY=sk-ant-...   # Required for default anthropic provider
+PROMPTQA_MODEL=claude-sonnet-4-5-20250929  # Optional model override
+
+# Only needed if using openai provider:
+LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-...
 LLM_MODEL=gpt-4o-mini
 ```

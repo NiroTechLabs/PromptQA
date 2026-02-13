@@ -137,6 +137,30 @@ function extractJSON(raw: string): string {
   return raw.trim();
 }
 
+// ── Hard failure detection (no LLM needed) ───────────────────
+
+export function detectHardFail(result: StepExecutionResult): string | null {
+  if (!result.success) {
+    return 'Step execution failed';
+  }
+
+  const firstPageError = result.capture.pageErrors[0];
+  if (firstPageError) {
+    return `Uncaught page error: ${firstPageError.message}`;
+  }
+
+  const serverError = result.capture.networkFailures.find(
+    (f) =>
+      f.status >= 500 &&
+      ['POST', 'PUT', 'DELETE'].includes(f.method.toUpperCase()),
+  );
+  if (serverError) {
+    return `Server error ${String(serverError.status)} on ${serverError.method} ${serverError.url}`;
+  }
+
+  return null;
+}
+
 // ── Formatting helpers ───────────────────────────────────────
 
 function formatConsoleErrors(sr: StepExecutionResult): string {

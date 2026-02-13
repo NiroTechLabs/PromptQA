@@ -8,7 +8,7 @@ export interface LLMClient {
 
 // ── Config schema ────────────────────────────────────────────
 
-export const llmProviderSchema = z.enum(['openai', 'mock']);
+export const llmProviderSchema = z.enum(['anthropic', 'openai', 'mock']);
 
 export type LLMProvider = z.infer<typeof llmProviderSchema>;
 
@@ -23,9 +23,19 @@ export type LLMConfig = z.infer<typeof llmConfigSchema>;
 // ── Env loader ───────────────────────────────────────────────
 
 export function loadLLMConfig(): LLMConfig {
+  const provider = process.env['LLM_PROVIDER'] ?? 'anthropic';
+
+  const apiKey = provider === 'anthropic'
+    ? process.env['ANTHROPIC_API_KEY']
+    : process.env['OPENAI_API_KEY'];
+
+  const model = provider === 'anthropic'
+    ? process.env['PROMPTQA_MODEL']
+    : process.env['LLM_MODEL'];
+
   return llmConfigSchema.parse({
-    provider: process.env['LLM_PROVIDER'] ?? 'openai',
-    apiKey: process.env['OPENAI_API_KEY'],
-    model: process.env['LLM_MODEL'],
+    provider,
+    apiKey,
+    model,
   });
 }
