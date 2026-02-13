@@ -6,3 +6,4 @@
 
 export * from './step.js';
 export * from './results.js';
+export * from './prescan.js';
