@@ -4,4 +4,27 @@
  * Only module allowed to make LLM API calls.
  */
 
-export {};
+import type { LLMClient, LLMConfig } from './client.js';
+import { createOpenAIClient } from './openai.js';
+import { createMockClient } from './mock.js';
+
+export * from './client.js';
+export { createOpenAIClient } from './openai.js';
+export { createMockClient } from './mock.js';
+
+// ── Provider factory ─────────────────────────────────────────
+
+export function createLLMClient(config: LLMConfig): LLMClient {
+  switch (config.provider) {
+    case 'openai': {
+      if (!config.apiKey) {
+        throw new Error(
+          'OPENAI_API_KEY is required when using the openai provider',
+        );
+      }
+      return createOpenAIClient(config.apiKey, config.model);
+    }
+    case 'mock':
+      return createMockClient();
+  }
+}

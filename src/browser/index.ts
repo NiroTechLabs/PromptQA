@@ -5,3 +5,5 @@
  */
 
 export { resolveSelector, describeSelector, SelectorError } from './selectors.js';
+export { launchSession } from './runner.js';
+export type { RunnerConfig, BrowserSession } from './runner.js';
