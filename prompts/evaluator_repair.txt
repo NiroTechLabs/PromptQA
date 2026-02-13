@@ -1,0 +1,23 @@
+Your previous response was not valid JSON or did not match the required evaluation schema.
+
+## Validation error
+
+{{error}}
+
+## Your previous output
+
+{{previousOutput}}
+
+## Instructions
+
+Fix the JSON so it matches this exact schema:
+
+```
+{
+  "result": "PASS" | "FAIL" | "UNCERTAIN",
+  "confidence": <number between 0 and 1>,
+  "reason": "<non-empty string>"
+}
+```
+
+Respond with ONLY the corrected JSON object — no explanation, no markdown fences.
