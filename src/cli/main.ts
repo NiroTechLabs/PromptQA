@@ -5,15 +5,20 @@
  * Thin wrapper — all logic delegated to core.
  */
 
-import { Command } from "commander";
+import 'dotenv/config';
+import { Command } from 'commander';
+
+import { registerTestCommand } from './run.js';
 
 const program = new Command();
 
 program
-  .name("promptqa")
+  .name('promptqa')
   .description(
-    "Prompt-driven web app test runner. Generate browser tests from natural language, execute with Playwright, evaluate with LLM.",
+    'Prompt-driven web app test runner. Generate browser tests from natural language, execute with Playwright, evaluate with LLM.',
   )
-  .version("0.1.0");
+  .version('0.1.0');
+
+registerTestCommand(program);
 
 program.parse();

@@ -12,6 +12,7 @@ import type {
 } from '../schema/index.js';
 import { computeSummaryVerdict } from '../schema/index.js';
 import { TIMEOUTS, LIMITS } from '../config/defaults.js';
+import type { CookieParam } from '../browser/runner.js';
 import { launchSession } from '../browser/runner.js';
 import { prescanPage } from '../browser/prescan.js';
 import { planSteps, PlannerError } from './planner.js';
@@ -24,8 +25,10 @@ export interface AgentLoopConfig {
   prompt: string;
   headless: boolean;
   outputDir: string;
-  maxSteps?: number;
-  totalTimeout?: number;
+  maxSteps?: number | undefined;
+  totalTimeout?: number | undefined;
+  cookies?: readonly CookieParam[] | undefined;
+  loginPrompt?: string | undefined;
 }
 
 export interface AgentLoopResult {
@@ -144,11 +147,32 @@ export async function runAgentLoop(
   });
 
   try {
-    // ── 2. Pre-scan target URL ─────────────────────────────────
+    // ── 2. Inject cookies (before any navigation) ──────────────
 
-    const snapshot = await prescanPage(session.page, config.url);
+    if (config.cookies && config.cookies.length > 0) {
+      await session.addCookies(config.cookies);
+    }
 
-    // ── 3. Plan steps ──────────────────────────────────────────
+    // ── 3. Pre-scan target URL ─────────────────────────────────
+
+    let snapshot = await prescanPage(session.page, config.url);
+
+    // ── 4. Login flow (if requested) ─────────────────────────
+
+    if (config.loginPrompt) {
+      const loginSteps = await planSteps(client, {
+        prompt: config.loginPrompt,
+        baseUrl: config.url,
+        snapshot,
+      });
+      for (let i = 0; i < loginSteps.length; i++) {
+        await session.executeStep(loginSteps[i]!, i);
+      }
+      // Re-scan after login — page state has changed
+      snapshot = await prescanPage(session.page, session.page.url());
+    }
+
+    // ── 5. Plan steps ──────────────────────────────────────────
 
     let steps: Step[];
     try {

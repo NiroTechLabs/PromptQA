@@ -16,9 +16,16 @@ export interface RunnerConfig {
   screenshotDir: string;
 }
 
+export interface CookieParam {
+  name: string;
+  value: string;
+  url: string;
+}
+
 export interface BrowserSession {
   readonly page: Page;
   executeStep(step: Step, stepIndex: number): Promise<StepExecutionResult>;
+  addCookies(cookies: readonly CookieParam[]): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -37,6 +44,10 @@ export async function launchSession(
 
   return {
     page,
+
+    async addCookies(cookies: readonly CookieParam[]): Promise<void> {
+      await context.addCookies([...cookies]);
+    },
 
     async executeStep(
       step: Step,

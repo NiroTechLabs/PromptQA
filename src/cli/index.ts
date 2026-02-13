@@ -4,4 +4,4 @@
  * No business logic lives here.
  */
 
-export {};
+export { registerTestCommand } from './run.js';
