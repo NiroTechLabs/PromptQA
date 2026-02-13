@@ -7,6 +7,7 @@ import type { Page } from 'playwright';
 import type { Step, StepExecutionResult, WaitStep } from '../schema/index.js';
 import { TIMEOUTS, TOKEN_GUARDS } from '../config/defaults.js';
 import { resolveSelector } from './selectors.js';
+import { attachCapture } from './capture.js';
 
 // ── Public types ─────────────────────────────────────────────
 
@@ -32,33 +33,7 @@ export async function launchSession(
   const context = await browser.newContext();
   const page = await context.newPage();
 
-  // Per-step error collectors — reset before each step
-  let consoleErrors: string[] = [];
-  let networkErrors: string[] = [];
-  let pageErrors: string[] = [];
-
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') {
-      consoleErrors.push(msg.text());
-    }
-  });
-
-  page.on('requestfailed', (request) => {
-    const failure = request.failure();
-    if (failure) {
-      networkErrors.push(`FAILED ${request.url()} ${failure.errorText}`);
-    }
-  });
-
-  page.on('response', (response) => {
-    if (response.status() >= 400) {
-      networkErrors.push(`${String(response.status())} ${response.url()}`);
-    }
-  });
-
-  page.on('pageerror', (error) => {
-    pageErrors.push(error.message);
-  });
+  const capture = attachCapture(page);
 
   return {
     page,
@@ -67,9 +42,8 @@ export async function launchSession(
       step: Step,
       stepIndex: number,
     ): Promise<StepExecutionResult> {
-      consoleErrors = [];
-      networkErrors = [];
-      pageErrors = [];
+      // Flush any stale data from between steps
+      capture.flush();
 
       let success = true;
       try {
@@ -95,9 +69,7 @@ export async function launchSession(
         url: page.url(),
         screenshotPath,
         visibleText,
-        consoleErrors: consoleErrors.slice(0, TOKEN_GUARDS.MAX_CONSOLE_ERRORS),
-        networkErrors: networkErrors.slice(0, TOKEN_GUARDS.MAX_NETWORK_ERRORS),
-        pageErrors: [...pageErrors],
+        capture: capture.flush(),
       };
     },
 

@@ -5,5 +5,6 @@
  */
 
 export * from './step.js';
+export * from './capture.js';
 export * from './results.js';
 export * from './prescan.js';

@@ -4,4 +4,5 @@
  * Pure logic — no IO, no CLI, no browser APIs.
  */
 
-export {};
+export { planSteps, PlannerError } from './planner.js';
+export type { PlannerInput } from './planner.js';

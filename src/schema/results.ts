@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { stepSchema } from './step.js';
+import { stepCaptureSchema } from './capture.js';
 
 // ── EvaluationResult ──────────────────────────────────────────
 
@@ -25,9 +26,7 @@ export const stepExecutionResultSchema = z.object({
   url: z.string().url(),
   screenshotPath: z.string().min(1),
   visibleText: z.string(),
-  consoleErrors: z.array(z.string()),
-  networkErrors: z.array(z.string()),
-  pageErrors: z.array(z.string()),
+  capture: stepCaptureSchema,
   evaluation: evaluationResultSchema.optional(),
 });
 
