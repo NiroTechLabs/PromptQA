@@ -17,7 +17,7 @@ import { launchSession } from '../browser/runner.js';
 import { prescanPage } from '../browser/prescan.js';
 import { generateJSON, serializeJSON } from '../report/reporter.js';
 import { planSteps, PlannerError } from './planner.js';
-import { evaluateStep, detectHardFail } from './evaluator.js';
+import { evaluateStep } from './evaluator.js';
 
 // ── Public types ─────────────────────────────────────────────
 
@@ -39,28 +39,44 @@ export interface AgentLoopResult {
 
 // ── Retry classification ─────────────────────────────────────
 
-type FailureKind = 'element_not_found' | 'action_no_effect' | 'hard_fail';
+type FailureKind = 'element_not_found' | 'action_no_effect' | 'hard_fail' | 'none';
 
 function classifyFailure(
   result: StepExecutionResult,
   prevVisibleText: string,
 ): FailureKind {
-  // element_not_found: step failed and error likely from selector timeout
   if (!result.success) {
+    // Step threw — distinguish selector-not-found from real crashes.
+    // Page errors or 5xx on mutations are hard fails (not retryable).
+    const hasPageError = result.capture.pageErrors.length > 0;
+    const hasServerError = result.capture.networkFailures.some(
+      (f) =>
+        f.status >= 500 &&
+        ['POST', 'PUT', 'DELETE'].includes(f.method.toUpperCase()),
+    );
+    if (hasPageError || hasServerError) {
+      return 'hard_fail';
+    }
+    // Otherwise it's likely a selector timeout → retryable
     return 'element_not_found';
   }
 
-  // action_no_effect: step "succeeded" but page didn't change
+  // Step succeeded but page errors occurred → hard fail
+  if (result.capture.pageErrors.length > 0) {
+    return 'hard_fail';
+  }
+
+  // Step succeeded but nothing changed on an interactive step → retryable
   if (
     result.step.type !== 'goto' &&
     result.step.type !== 'wait' &&
-    result.visibleText === prevVisibleText &&
-    result.url === result.url
+    result.step.type !== 'expect_text' &&
+    result.visibleText === prevVisibleText
   ) {
     return 'action_no_effect';
   }
 
-  return 'hard_fail';
+  return 'none';
 }
 
 // ── Bug extraction (deterministic) ──────────────────────────
@@ -223,28 +239,20 @@ export async function runAgentLoop(
 
       // ── 4a. Check retry conditions ─────────────────────────
 
-      const hardFail = detectHardFail(result);
-      if (hardFail) {
-        const failKind = classifyFailure(result, prevVisibleText);
+      const failKind = classifyFailure(result, prevVisibleText);
 
-        if (
-          failKind === 'element_not_found' &&
-          Date.now() + TIMEOUTS.RETRY_WAIT < deadline
-        ) {
-          await delay(TIMEOUTS.RETRY_WAIT);
-          result = await session.executeStep(step, i);
-        }
-        // hard_fail or timeout: no retry — keep the failed result
-      } else if (
-        result.success &&
-        result.visibleText === prevVisibleText &&
-        step.type !== 'goto' &&
-        step.type !== 'wait' &&
-        step.type !== 'expect_text'
+      if (
+        failKind === 'element_not_found' &&
+        Date.now() + TIMEOUTS.RETRY_WAIT < deadline
       ) {
-        // action_no_effect — retry once
+        // Selector timeout — wait and retry once
+        await delay(TIMEOUTS.RETRY_WAIT);
+        result = await session.executeStep(step, i);
+      } else if (failKind === 'action_no_effect') {
+        // Page unchanged after interaction — retry once immediately
         result = await session.executeStep(step, i);
       }
+      // hard_fail or none: no retry
 
       // ── 4b. Evaluate with LLM ─────────────────────────────
 
@@ -264,8 +272,7 @@ export async function runAgentLoop(
 
       // ── 4d. Hard fail → stop early ─────────────────────────
 
-      const postEvalHardFail = detectHardFail(result);
-      if (postEvalHardFail) {
+      if (!result.success || classifyFailure(result, prevVisibleText) === 'hard_fail') {
         break;
       }
     }

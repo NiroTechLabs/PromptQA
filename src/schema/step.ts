@@ -39,7 +39,7 @@ const baseFields = {
 export const gotoStepSchema = z.object({
   ...baseFields,
   type: z.literal('goto'),
-  value: z.string().url(),
+  value: z.string().min(1),
 });
 
 export const clickStepSchema = z.object({

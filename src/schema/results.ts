@@ -23,7 +23,7 @@ export const stepExecutionResultSchema = z.object({
   stepIndex: z.number().int().nonnegative(),
   step: stepSchema,
   success: z.boolean(),
-  url: z.string().url(),
+  url: z.string(),
   screenshotPath: z.string().min(1),
   visibleText: z.string(),
   capture: stepCaptureSchema,
