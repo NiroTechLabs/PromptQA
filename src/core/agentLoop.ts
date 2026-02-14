@@ -15,7 +15,7 @@ import { TIMEOUTS, LIMITS } from '../config/defaults.js';
 import * as log from '../utils/logger.js';
 import type { CookieParam } from '../browser/runner.js';
 import { launchSession } from '../browser/runner.js';
-import { prescanPage } from '../browser/prescan.js';
+import { prescanPage, prescanCurrentPage } from '../browser/prescan.js';
 import { generateJSON, serializeJSON } from '../report/reporter.js';
 import { planSteps, PlannerError } from './planner.js';
 import { evaluateStep } from './evaluator.js';
@@ -215,8 +215,8 @@ export async function runAgentLoop(
         } catch {
           // Non-fatal — page may have long-polling or streaming connections
         }
-        // Re-scan after login — page state has changed
-        snapshot = await prescanPage(session.page, session.page.url());
+        // Re-scan after login — without navigating, to preserve auth state
+        snapshot = await prescanCurrentPage(session.page);
         log.prescan(snapshot.elements.length, session.page.url());
         try {
           const buf = await session.page.screenshot({ type: 'png' });
@@ -242,7 +242,7 @@ export async function runAgentLoop(
         }
         // Re-scan if possible so planner has something to work with
         try {
-          snapshot = await prescanPage(session.page, session.page.url());
+          snapshot = await prescanCurrentPage(session.page);
         } catch {
           // Keep existing snapshot
         }

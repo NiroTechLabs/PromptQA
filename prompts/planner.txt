@@ -33,12 +33,29 @@ Every selector must be a SelectorHint object — never a raw CSS string:
 
 Prefer "testid" when a data-testid is available. Use "role" or "text" next. Use "css" only as a last resort.
 
-CRITICAL RULES FOR VALID OUTPUT:
-- Every step MUST have a "description" field (non-empty string)
-- Every step with a selector MUST have a valid SelectorHint object, never null
-- The only valid strategies are: testid, role, text, css — nothing else
-- Do NOT invent strategies like "placeholder", "name", "label" etc.
-- If unsure which selector to use, prefer strategy "css" with a standard CSS selector
+CRITICAL — YOUR OUTPUT MUST FOLLOW THESE RULES EXACTLY:
+
+1. Every step MUST have "type" and "description" fields.
+
+2. For expect_text steps: MUST have a "value" field (the text to search for). Example:
+   {"type": "expect_text", "description": "Verify heading is visible", "value": "Welcome"}
+
+3. For click steps: MUST have a "selector" field. Example:
+   {"type": "click", "description": "Click login", "selector": {"strategy": "text", "value": "Login"}}
+
+4. For type steps: MUST have "selector" and "value" fields. Example:
+   {"type": "type", "description": "Enter email", "selector": {"strategy": "css", "value": "input[type='email']"}, "value": "user@example.com"}
+
+5. Selector strategies — ONLY these four are valid:
+   - "testid" — for data-testid attributes
+   - "role" — for ARIA roles
+   - "text" — for visible text content
+   - "css" — for CSS selectors
+   NEVER use "placeholder", "name", "label", "id", or anything else as a strategy.
+   If you want to select by placeholder, use css: {"strategy": "css", "value": "input[placeholder='Email']"}
+   If you want to select by name, use css: {"strategy": "css", "value": "input[name='email']"}
+
+6. NEVER set selector to null. If a step needs a selector, it must be a valid object.
 
 ## Rules
 

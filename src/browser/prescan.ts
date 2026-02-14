@@ -21,6 +21,23 @@ export async function prescanPage(
     waitUntil: 'domcontentloaded',
   });
 
+  return scanCurrentDOM(page);
+}
+
+/**
+ * Extract a structured snapshot of the CURRENT page without navigating.
+ * Use this after login or any action that changes the page state —
+ * calling prescanPage would reload the page and lose the session.
+ */
+export async function prescanCurrentPage(
+  page: Page,
+): Promise<PageSnapshot> {
+  return scanCurrentDOM(page);
+}
+
+// ── Shared scan logic ────────────────────────────────────────
+
+async function scanCurrentDOM(page: Page): Promise<PageSnapshot> {
   const [title, visibleText, extracted] = await Promise.all([
     page.title(),
     page
