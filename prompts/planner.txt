@@ -33,6 +33,13 @@ Every selector must be a SelectorHint object — never a raw CSS string:
 
 Prefer "testid" when a data-testid is available. Use "role" or "text" next. Use "css" only as a last resort.
 
+CRITICAL RULES FOR VALID OUTPUT:
+- Every step MUST have a "description" field (non-empty string)
+- Every step with a selector MUST have a valid SelectorHint object, never null
+- The only valid strategies are: testid, role, text, css — nothing else
+- Do NOT invent strategies like "placeholder", "name", "label" etc.
+- If unsure which selector to use, prefer strategy "css" with a standard CSS selector
+
 ## Rules
 
 1. The first step MUST be a "goto" step with the base URL.
@@ -40,6 +47,7 @@ Prefer "testid" when a data-testid is available. Use "role" or "text" next. Use 
 3. Use the page snapshot below to choose accurate selectors — do not guess.
 4. Each step must have a clear "description" explaining what it does.
 5. Do not include timeouts unless the page is known to be slow.
+6. A screenshot of the current page may be attached. Use it to understand the visual layout and identify the correct elements.
 
 ## Page snapshot
 

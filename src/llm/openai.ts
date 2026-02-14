@@ -60,5 +60,55 @@ export function createOpenAIClient(
 
       return parsed.choices[0].message.content;
     },
+
+    async generateWithImage(
+      systemPrompt: string,
+      userPrompt: string,
+      imageBase64: string,
+      mimeType: string,
+    ): Promise<string> {
+      const dataUri = `data:${mimeType};base64,${imageBase64}`;
+
+      const response = await fetch(COMPLETIONS_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: resolvedModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image_url',
+                  image_url: { url: dataUri },
+                },
+                {
+                  type: 'text',
+                  text: userPrompt,
+                },
+              ],
+            },
+          ],
+          temperature: 0,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(
+          `OpenAI API error (${String(response.status)}): ${body}`,
+        );
+      }
+
+      const raw = await response.text();
+      const body: unknown = JSON.parse(raw);
+      const parsed = chatResponseSchema.parse(body);
+
+      return parsed.choices[0].message.content;
+    },
   };
 }

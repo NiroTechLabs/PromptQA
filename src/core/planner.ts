@@ -6,6 +6,7 @@ import type { LLMClient } from '../llm/index.js';
 import type { Step, PageSnapshot } from '../schema/index.js';
 import { stepListSchema } from '../schema/index.js';
 import { LIMITS } from '../config/defaults.js';
+import * as log from '../utils/logger.js';
 
 // ── Public types ─────────────────────────────────────────────
 
@@ -13,6 +14,7 @@ export interface PlannerInput {
   prompt: string;
   baseUrl: string;
   snapshot: PageSnapshot;
+  screenshotBase64?: string | undefined;
 }
 
 // ── Error ────────────────────────────────────────────────────
@@ -37,22 +39,44 @@ export async function planSteps(
   client: LLMClient,
   input: PlannerInput,
 ): Promise<Step[]> {
+  log.llm('Planner generating steps...');
   const systemPrompt = await buildSystemPrompt(input);
-  const raw = await client.generate(systemPrompt, input.prompt);
+
+  let raw: string;
+  if (input.screenshotBase64 && client.generateWithImage) {
+    log.detail('Screenshot attached — using vision mode');
+    raw = await client.generateWithImage(systemPrompt, input.prompt, input.screenshotBase64, 'image/png');
+  } else {
+    raw = await client.generate(systemPrompt, input.prompt);
+  }
 
   const firstAttempt = tryParse(raw);
-  if (firstAttempt.ok) return firstAttempt.steps;
+  if (firstAttempt.ok) {
+    logPlannedSteps(firstAttempt.steps);
+    return firstAttempt.steps;
+  }
 
   // Repair: one retry with the repair prompt
+  log.warn(`Planner parse failed, attempting repair: ${firstAttempt.error}`);
   const repairPrompt = await buildRepairPrompt(raw, firstAttempt.error);
   const repaired = await client.generate(systemPrompt, repairPrompt);
 
   const secondAttempt = tryParse(repaired);
-  if (secondAttempt.ok) return secondAttempt.steps;
+  if (secondAttempt.ok) {
+    logPlannedSteps(secondAttempt.steps);
+    return secondAttempt.steps;
+  }
 
   throw new PlannerError(
     `Planner failed after repair attempt: ${secondAttempt.error}`,
   );
+}
+
+function logPlannedSteps(steps: Step[]): void {
+  log.planned(steps.length);
+  for (let i = 0; i < steps.length; i++) {
+    log.detail(`${String(i + 1)}. [${steps[i]!.type}] ${steps[i]!.description}`);
+  }
 }
 
 // ── Template rendering ───────────────────────────────────────

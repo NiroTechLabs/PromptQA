@@ -8,6 +8,7 @@ import type { Step, StepExecutionResult, WaitStep } from '../schema/index.js';
 import { TIMEOUTS, TOKEN_GUARDS } from '../config/defaults.js';
 import { resolveSelector } from './selectors.js';
 import { attachCapture } from './capture.js';
+import * as log from '../utils/logger.js';
 
 // ── Public types ─────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ export async function launchSession(
 async function performAction(page: Page, step: Step): Promise<void> {
   switch (step.type) {
     case 'goto':
+      log.detail(`goto → ${step.value}`);
       await page.goto(step.value, {
         timeout: step.timeout ?? TIMEOUTS.NAVIGATION_TIMEOUT,
         waitUntil: 'domcontentloaded',
@@ -102,6 +104,7 @@ async function performAction(page: Page, step: Step): Promise<void> {
       break;
 
     case 'click': {
+      log.detail(`click → ${step.selector.strategy}="${step.selector.value}"`);
       const locator = resolveSelector(page, step.selector);
       await locator.click({
         timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
@@ -110,6 +113,7 @@ async function performAction(page: Page, step: Step): Promise<void> {
     }
 
     case 'type': {
+      log.detail(`type "${step.value}" → ${step.selector.strategy}="${step.selector.value}"`);
       const locator = resolveSelector(page, step.selector);
       await locator.fill(step.value, {
         timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
@@ -118,6 +122,7 @@ async function performAction(page: Page, step: Step): Promise<void> {
     }
 
     case 'select': {
+      log.detail(`select "${step.value}" → ${step.selector.strategy}="${step.selector.value}"`);
       const locator = resolveSelector(page, step.selector);
       await locator.selectOption(step.value, {
         timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
@@ -126,6 +131,7 @@ async function performAction(page: Page, step: Step): Promise<void> {
     }
 
     case 'upload': {
+      log.detail(`upload "${step.value}" → ${step.selector.strategy}="${step.selector.value}"`);
       const locator = resolveSelector(page, step.selector);
       await locator.setInputFiles(step.value, {
         timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
@@ -134,10 +140,12 @@ async function performAction(page: Page, step: Step): Promise<void> {
     }
 
     case 'wait':
+      log.detail(`wait → ${step.selector ? `${step.selector.strategy}="${step.selector.value}"` : `${step.value ?? '?'}ms`}`);
       await handleWait(page, step);
       break;
 
     case 'expect_text': {
+      log.detail(`expect_text → "${step.value}"`);
       const timeout = step.timeout ?? TIMEOUTS.ACTION_TIMEOUT;
       const locator = step.selector
         ? resolveSelector(page, step.selector)

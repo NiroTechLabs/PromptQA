@@ -4,6 +4,12 @@ import { z } from 'zod';
 
 export interface LLMClient {
   generate(systemPrompt: string, userPrompt: string): Promise<string>;
+  generateWithImage?(
+    systemPrompt: string,
+    userPrompt: string,
+    imageBase64: string,
+    mimeType: string,
+  ): Promise<string>;
 }
 
 // ── Config schema ────────────────────────────────────────────

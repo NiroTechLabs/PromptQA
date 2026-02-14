@@ -1,0 +1,8 @@
+baseUrl: http://localhost:8000
+auth:
+  loginPrompt: "log in with office@nk-sanierung.com and password 1Firma?NK!"
+tests:
+  - name: chat-basic
+    prompt: "type 'Hallo' in the chat input, send it, verify a response appears"
+  - name: receipt-entry
+    prompt: "type 'Ich habe 200 Euro für ein Geschäftsessen ausgegeben' and send, verify the booking is confirmed"

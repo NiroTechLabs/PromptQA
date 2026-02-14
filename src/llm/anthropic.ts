@@ -33,5 +33,45 @@ export function createAnthropicClient(
 
       return firstBlock.text;
     },
+
+    async generateWithImage(
+      systemPrompt: string,
+      userPrompt: string,
+      imageBase64: string,
+      mimeType: string,
+    ): Promise<string> {
+      const response = await client.messages.create({
+        model: resolvedModel,
+        max_tokens: MAX_TOKENS,
+        system: systemPrompt,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mimeType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+                  data: imageBase64,
+                },
+              },
+              {
+                type: 'text',
+                text: userPrompt,
+              },
+            ],
+          },
+        ],
+        temperature: 0,
+      });
+
+      const firstBlock = response.content[0];
+      if (!firstBlock || firstBlock.type !== 'text') {
+        throw new Error('Anthropic API returned no text content');
+      }
+
+      return firstBlock.text;
+    },
   };
 }

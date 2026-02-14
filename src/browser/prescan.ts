@@ -4,6 +4,7 @@ import type { InteractiveElement, PageSnapshot } from '../schema/index.js';
 import { TIMEOUTS } from '../config/defaults.js';
 
 const PRESCAN_TEXT_LIMIT = 4_000;
+const MAX_ELEMENTS = 80;
 
 // ── Public API ───────────────────────────────────────────────
 
@@ -28,11 +29,17 @@ export async function prescanPage(
     page.evaluate(extractFromDOM),
   ]);
 
+  const prioritized = prioritizeElements(extracted.elements);
+  const total = extracted.totalCount;
+  const visible = extracted.elements.length;
+  const sent = prioritized.length;
+  console.log(`[prescan] Found ${total} total elements, ${visible} visible, sending ${sent} to planner`);
+
   const snapshot: PageSnapshot = {
     url: page.url(),
     title,
     visibleText,
-    elements: extracted.elements,
+    elements: prioritized,
   };
 
   if (extracted.metaDescription) {
@@ -42,6 +49,34 @@ export async function prescanPage(
   return snapshot;
 }
 
+// ── Element prioritization ───────────────────────────────────
+
+function prioritizeElements(elements: InteractiveElement[]): InteractiveElement[] {
+  if (elements.length <= MAX_ELEMENTS) return elements;
+
+  const withTestId: InteractiveElement[] = [];
+  const withName: InteractiveElement[] = [];
+  const withPlaceholder: InteractiveElement[] = [];
+  const withAriaLabel: InteractiveElement[] = [];
+  const rest: InteractiveElement[] = [];
+
+  for (const el of elements) {
+    if (el.testId) withTestId.push(el);
+    else if (el.name) withName.push(el);
+    else if (el.placeholder) withPlaceholder.push(el);
+    else if (el.text) withAriaLabel.push(el);
+    else rest.push(el);
+  }
+
+  return [
+    ...withTestId,
+    ...withName,
+    ...withPlaceholder,
+    ...withAriaLabel,
+    ...rest,
+  ].slice(0, MAX_ELEMENTS);
+}
+
 // ── Browser-context extraction ───────────────────────────────
 // This function is serialized and executed inside the browser.
 // It must NOT reference any outer-scope variables.
@@ -49,6 +84,7 @@ export async function prescanPage(
 function extractFromDOM(): {
   metaDescription: string | null;
   elements: InteractiveElement[];
+  totalCount: number;
 } {
   function attr(el: Element, name: string): string | undefined {
     return el.getAttribute(name) ?? undefined;
@@ -77,12 +113,29 @@ function extractFromDOM(): {
     return undefined;
   }
 
+  function isVisible(el: Element): boolean {
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+
+    const htmlEl = el as HTMLElement;
+    if (htmlEl.offsetWidth === 0 && htmlEl.offsetHeight === 0) return false;
+
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none') return false;
+    if (style.visibility === 'hidden') return false;
+    if (style.opacity === '0') return false;
+
+    return true;
+  }
+
   const seen = new Set<Element>();
   const elements: InteractiveElement[] = [];
+  let totalCount = 0;
 
   function add(el: Element, data: InteractiveElement): void {
     if (seen.has(el)) return;
     seen.add(el);
+    totalCount++;
+    if (!isVisible(el)) return;
     elements.push(data);
   }
 
@@ -143,5 +196,5 @@ function extractFromDOM(): {
   const metaEl = document.querySelector('meta[name="description"]');
   const metaDescription = metaEl?.getAttribute('content') ?? null;
 
-  return { metaDescription, elements };
+  return { metaDescription, elements, totalCount };
 }

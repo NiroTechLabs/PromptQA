@@ -11,3 +11,5 @@ Your previous response was not valid JSON or did not match the required Step sch
 ## Instructions
 
 Fix the JSON so it is a valid array of Step objects. Follow the exact schema rules from the original prompt. Respond with ONLY the corrected JSON array — no explanation, no markdown fences.
+
+Remember: valid strategies are ONLY testid, role, text, css. Every step needs a description field.

@@ -6,6 +6,7 @@ import type { LLMClient } from '../llm/index.js';
 import type { StepExecutionResult, EvaluationResult } from '../schema/index.js';
 import { evaluationResultSchema } from '../schema/index.js';
 import { TOKEN_GUARDS } from '../config/defaults.js';
+import * as log from '../utils/logger.js';
 
 // ── Public types ─────────────────────────────────────────────
 
@@ -32,19 +33,28 @@ export async function evaluateStep(
   client: LLMClient,
   input: EvaluatorInput,
 ): Promise<EvaluationResult> {
+  log.llm(`Evaluating: ${input.stepResult.step.description}`);
   const systemPrompt = await buildSystemPrompt(input.stepResult);
   const raw = await client.generate(systemPrompt, input.stepResult.step.description);
 
   const firstAttempt = tryParse(raw);
-  if (firstAttempt.ok) return firstAttempt.evaluation;
+  if (firstAttempt.ok) {
+    log.detail(`Verdict: ${firstAttempt.evaluation.result} (confidence: ${String(firstAttempt.evaluation.confidence)}) — ${firstAttempt.evaluation.reason}`);
+    return firstAttempt.evaluation;
+  }
 
   // Repair: one retry
+  log.warn(`Evaluator parse failed, attempting repair: ${firstAttempt.error}`);
   const repairPrompt = await buildRepairPrompt(raw, firstAttempt.error);
   const repaired = await client.generate(systemPrompt, repairPrompt);
 
   const secondAttempt = tryParse(repaired);
-  if (secondAttempt.ok) return secondAttempt.evaluation;
+  if (secondAttempt.ok) {
+    log.detail(`Verdict: ${secondAttempt.evaluation.result} (confidence: ${String(secondAttempt.evaluation.confidence)}) — ${secondAttempt.evaluation.reason}`);
+    return secondAttempt.evaluation;
+  }
 
+  log.warn('Evaluator failed after repair — falling back to UNCERTAIN');
   return UNCERTAIN_FALLBACK;
 }
 

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Command } from 'commander';
@@ -132,6 +132,9 @@ export function registerTestCommand(program: Command): void {
           loginPrompt?: string;
         },
       ) => {
+        // Resolve report path early so it's available in the catch block
+        const reportPath = opts.reportPath ?? '.artifacts';
+
         try {
           // 1. Load config file (CLI flags override)
           const fileConfig = await loadConfigFile(opts.config);
@@ -145,7 +148,7 @@ export function registerTestCommand(program: Command): void {
             Number(opts.timeout) ||
             fileConfig.timeout ||
             TIMEOUTS.TOTAL_RUN_TIMEOUT / 1000;
-          const reportPath = opts.reportPath ?? fileConfig.reportPath ?? '.artifacts';
+          const resolvedReportPath = fileConfig.reportPath ?? reportPath;
           const cookieString = opts.cookie ?? fileConfig.cookie;
           const loginPrompt = opts.loginPrompt ?? fileConfig.loginPrompt;
 
@@ -160,7 +163,7 @@ export function registerTestCommand(program: Command): void {
           const client = createLLMClient(llmConfig);
 
           // 5. Run agent loop
-          const outputDir = path.resolve(reportPath);
+          const outputDir = path.resolve(resolvedReportPath);
           const { summary, exitCode } = await runAgentLoop(client, {
             url,
             prompt,
@@ -194,7 +197,27 @@ export function registerTestCommand(program: Command): void {
         } catch (err) {
           const message =
             err instanceof Error ? err.message : String(err);
+          const stack =
+            err instanceof Error ? err.stack ?? '' : '';
           process.stderr.write(`Error: ${message}\n`);
+
+          // Always produce artifacts so the user never sees "no such file"
+          const errorDir = path.resolve(reportPath);
+          try {
+            await mkdir(errorDir, { recursive: true });
+            await writeFile(
+              path.join(errorDir, 'error.json'),
+              JSON.stringify(
+                { error: message, stack, timestamp: new Date().toISOString() },
+                null,
+                2,
+              ) + '\n',
+              'utf-8',
+            );
+          } catch {
+            // Last resort — can't write artifacts
+          }
+
           process.exitCode = 4;
         }
       },
@@ -332,7 +355,31 @@ export function registerRunCommand(program: Command): void {
           } catch (err) {
             const message =
               err instanceof Error ? err.message : String(err);
+            const stack =
+              err instanceof Error ? err.stack ?? '' : '';
             process.stderr.write(`Error [${test.name}]: ${message}\n`);
+
+            // Always produce artifacts so the user never sees "no such file"
+            try {
+              await mkdir(outputDir, { recursive: true });
+              await writeFile(
+                path.join(outputDir, 'error.json'),
+                JSON.stringify(
+                  {
+                    error: message,
+                    stack,
+                    testName: test.name,
+                    timestamp: new Date().toISOString(),
+                  },
+                  null,
+                  2,
+                ) + '\n',
+                'utf-8',
+              );
+            } catch {
+              // Last resort — can't write artifacts
+            }
+
             worstExitCode = 4;
           }
         }

@@ -12,6 +12,7 @@ import type {
 } from '../schema/index.js';
 import { computeSummaryVerdict } from '../schema/index.js';
 import { TIMEOUTS, LIMITS } from '../config/defaults.js';
+import * as log from '../utils/logger.js';
 import type { CookieParam } from '../browser/runner.js';
 import { launchSession } from '../browser/runner.js';
 import { prescanPage } from '../browser/prescan.js';
@@ -158,6 +159,9 @@ export async function runAgentLoop(
 
   // ── 1. Launch browser session ──────────────────────────────
 
+  log.section(`Run: ${config.prompt}`);
+  log.info(`Target: ${config.url}`);
+
   const session = await launchSession({
     headless: config.headless,
     screenshotDir,
@@ -173,58 +177,128 @@ export async function runAgentLoop(
     // ── 3. Pre-scan target URL ─────────────────────────────────
 
     let snapshot = await prescanPage(session.page, config.url);
+    log.prescan(snapshot.elements.length, config.url);
+
+    // Capture screenshot for vision-assisted planning
+    let screenshotBase64: string | undefined;
+    try {
+      const buf = await session.page.screenshot({ type: 'png' });
+      screenshotBase64 = buf.toString('base64');
+      log.detail('Page screenshot captured for planner vision');
+    } catch {
+      // Non-fatal — planner falls back to DOM-only mode
+    }
 
     // ── 4. Login flow (if requested) ─────────────────────────
 
+    let loginFailed = false;
+
     if (config.loginPrompt) {
-      const loginSteps = await planSteps(client, {
-        prompt: config.loginPrompt,
-        baseUrl: config.url,
-        snapshot,
-      });
-      for (let i = 0; i < loginSteps.length; i++) {
-        await session.executeStep(loginSteps[i]!, i);
+      try {
+        log.section('Login Flow');
+        log.login('Starting login flow...');
+        const loginSteps = await planSteps(client, {
+          prompt: config.loginPrompt,
+          baseUrl: config.url,
+          snapshot,
+          screenshotBase64,
+        });
+        for (let i = 0; i < loginSteps.length; i++) {
+          log.step(i, loginSteps.length, loginSteps[i]!.description);
+          await session.executeStep(loginSteps[i]!, i);
+        }
+        log.login('Login flow complete');
+        // Give the page time to settle after login before re-scanning
+        log.info('Waiting for page to settle after login...');
+        try {
+          await session.page.waitForLoadState('networkidle', { timeout: 5_000 });
+        } catch {
+          // Non-fatal — page may have long-polling or streaming connections
+        }
+        // Re-scan after login — page state has changed
+        snapshot = await prescanPage(session.page, session.page.url());
+        log.prescan(snapshot.elements.length, session.page.url());
+        try {
+          const buf = await session.page.screenshot({ type: 'png' });
+          screenshotBase64 = buf.toString('base64');
+        } catch {
+          screenshotBase64 = undefined;
+        }
+      } catch (loginErr) {
+        loginFailed = true;
+        const loginMessage = loginErr instanceof Error ? loginErr.message : String(loginErr);
+        log.error(`Login flow failed: ${loginMessage}`);
+        log.warn('Continuing test run — results may reflect unauthenticated state');
+        // Take a screenshot to show the state at login failure
+        try {
+          const buf = await session.page.screenshot({ type: 'png' });
+          screenshotBase64 = buf.toString('base64');
+          await session.page.screenshot({
+            path: path.join(screenshotDir, 'login-failure.png'),
+            fullPage: true,
+          });
+        } catch {
+          // Browser may be in a bad state — nothing we can do
+        }
+        // Re-scan if possible so planner has something to work with
+        try {
+          snapshot = await prescanPage(session.page, session.page.url());
+        } catch {
+          // Keep existing snapshot
+        }
       }
-      // Re-scan after login — page state has changed
-      snapshot = await prescanPage(session.page, session.page.url());
     }
 
     // ── 5. Plan steps ──────────────────────────────────────────
 
+    log.section('Planning');
     let steps: Step[];
     try {
       steps = await planSteps(client, {
         prompt: config.prompt,
         baseUrl: config.url,
         snapshot,
+        screenshotBase64,
       });
     } catch (err) {
-      if (err instanceof PlannerError) {
-        const finishedAt = new Date();
-        return {
-          summary: {
-            runId,
-            url: config.url,
-            prompt: config.prompt,
-            summary: 'FAIL',
-            startedAt: startedAt.toISOString(),
-            finishedAt: finishedAt.toISOString(),
-            durationMs: finishedAt.getTime() - startedAt.getTime(),
-            steps: [],
-            bugs: [],
-          },
-          exitCode: err.exitCode,
-        };
-      }
-      throw err;
+      const plannerMessage = err instanceof Error ? err.message : String(err);
+      const exitCode = err instanceof PlannerError ? err.exitCode : 4;
+      log.error(`Planner failed: ${plannerMessage}`);
+
+      const finishedAt = new Date();
+      const failSummary: RunSummary = {
+        runId,
+        url: config.url,
+        prompt: config.prompt,
+        summary: 'FAIL',
+        startedAt: startedAt.toISOString(),
+        finishedAt: finishedAt.toISOString(),
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+        steps: [],
+        bugs: [{
+          stepIndex: 0,
+          description: `Planner error: ${plannerMessage}`,
+          severity: 'critical',
+          evidence: loginFailed ? ['Login flow also failed before planning'] : [],
+        }],
+      };
+
+      // Always write summary.json even on planner failure
+      const jsonOutput = generateJSON(failSummary, exitCode);
+      const summaryPath = path.join(config.outputDir, 'summary.json');
+      await writeFile(summaryPath, serializeJSON(jsonOutput) + '\n', 'utf-8').catch(() => {});
+
+      return { summary: failSummary, exitCode };
     }
 
     if (steps.length > maxSteps) {
+      log.warn(`Truncating plan from ${String(steps.length)} to ${String(maxSteps)} steps`);
       steps = steps.slice(0, maxSteps);
     }
 
     // ── 4. Execute each step ───────────────────────────────────
 
+    log.section('Execution');
     const results: StepExecutionResult[] = [];
     let prevVisibleText = snapshot.visibleText;
 
@@ -235,7 +309,43 @@ export async function runAgentLoop(
       }
 
       const step = steps[i]!;
-      let result = await session.executeStep(step, i);
+      log.step(i, steps.length, step.description);
+
+      let result: StepExecutionResult;
+
+      try {
+        result = await session.executeStep(step, i);
+      } catch (execErr) {
+        // Unexpected crash in executeStep — build a synthetic failed result
+        const execMessage = execErr instanceof Error ? execErr.message : String(execErr);
+        log.error(`Step ${String(i + 1)} crashed: ${execMessage}`);
+
+        // Try to take a screenshot even on crash
+        const crashScreenshotPath = path.join(screenshotDir, `step-${String(i)}.png`);
+        try {
+          await session.page.screenshot({ path: crashScreenshotPath, fullPage: true });
+        } catch {
+          // Browser may be dead — nothing we can do
+        }
+
+        result = {
+          stepIndex: i,
+          step,
+          success: false,
+          url: session.page.url(),
+          screenshotPath: crashScreenshotPath,
+          visibleText: '',
+          capture: {
+            consoleEntries: [],
+            networkFailures: [],
+            pageErrors: [{ message: `executeStep crashed: ${execMessage}` }],
+          },
+        };
+        results.push(result);
+        await writeStepArtifact(config.outputDir, i, result).catch(() => {});
+        // Continue to next step instead of crashing the whole run
+        continue;
+      }
 
       // ── 4a. Check retry conditions ─────────────────────────
 
@@ -246,24 +356,45 @@ export async function runAgentLoop(
         Date.now() + TIMEOUTS.RETRY_WAIT < deadline
       ) {
         // Selector timeout — wait and retry once
+        log.warn(`Element not found, retrying step ${String(i + 1)}...`);
         await delay(TIMEOUTS.RETRY_WAIT);
-        result = await session.executeStep(step, i);
+        try {
+          result = await session.executeStep(step, i);
+        } catch {
+          // Retry also crashed — keep original failed result
+        }
       } else if (failKind === 'action_no_effect') {
         // Page unchanged after interaction — retry once immediately
-        result = await session.executeStep(step, i);
+        log.warn(`No page change detected, retrying step ${String(i + 1)}...`);
+        try {
+          result = await session.executeStep(step, i);
+        } catch {
+          // Retry crashed — keep original result
+        }
       }
       // hard_fail or none: no retry
 
       // ── 4b. Evaluate with LLM ─────────────────────────────
 
       if (Date.now() <= deadline) {
-        const evaluation = await evaluateStep(client, {
-          stepResult: result,
-        });
-        result = { ...result, evaluation };
+        try {
+          const evaluation = await evaluateStep(client, {
+            stepResult: result,
+          });
+          result = { ...result, evaluation };
+        } catch (evalErr) {
+          const evalMessage = evalErr instanceof Error ? evalErr.message : String(evalErr);
+          log.warn(`Evaluator failed for step ${String(i + 1)}: ${evalMessage}`);
+          // Continue without evaluation — step result still gets recorded
+        }
       }
 
       // ── 4c. Store result and write artifact ────────────────
+
+      log.stepResult(i, steps.length, result.success, step.description);
+      if (!result.success) {
+        log.error(`Step failed: ${step.description}`);
+      }
 
       results.push(result);
       await writeStepArtifact(config.outputDir, i, result).catch(() => {});
@@ -273,6 +404,9 @@ export async function runAgentLoop(
       // ── 4d. Hard fail → stop early ─────────────────────────
 
       if (!result.success || classifyFailure(result, prevVisibleText) === 'hard_fail') {
+        if (classifyFailure(result, prevVisibleText) === 'hard_fail') {
+          log.error('Hard failure detected — stopping early');
+        }
         break;
       }
     }
@@ -282,6 +416,13 @@ export async function runAgentLoop(
     const verdict: EvaluationVerdict = computeSummaryVerdict(results);
     const bugs = extractBugs(results);
     const finishedAt = new Date();
+
+    log.section('Summary');
+    const durationSec = ((finishedAt.getTime() - startedAt.getTime()) / 1000).toFixed(1);
+    log.info(`Verdict: ${verdict} (${String(results.length)} steps, ${durationSec}s)`);
+    if (bugs.length > 0) {
+      log.warn(`${String(bugs.length)} bug(s) found`);
+    }
 
     const summary: RunSummary = {
       runId,

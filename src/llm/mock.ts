@@ -20,5 +20,15 @@ export function createMockClient(
       callIndex++;
       return response;
     },
+
+    async generateWithImage(
+      systemPrompt: string,
+      userPrompt: string,
+      _imageBase64: string,
+      _mimeType: string,
+    ): Promise<string> {
+      // Vision calls use the same canned response queue
+      return this.generate(systemPrompt, userPrompt);
+    },
   };
 }

@@ -6,6 +6,7 @@ import { TIMEOUTS } from '../config/defaults.js';
 import { planSteps } from '../core/planner.js';
 import { prescanPage } from './prescan.js';
 import { resolveSelector } from './selectors.js';
+import * as log from '../utils/logger.js';
 
 // ── Cookie injection ────────────────────────────────────────
 
@@ -75,78 +76,124 @@ export async function runLoginFlow(
     snapshot,
   });
 
-  for (const step of steps) {
+  const loginPageUrl = page.url();
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]!;
+    log.login(`[${String(i + 1)}/${String(steps.length)}] ${step.type}: ${step.description}`);
     await executeLoginStep(page, step);
+  }
+
+  // Wait for the page to navigate away from the login page
+  let urlChanged = false;
+  try {
+    await page.waitForURL((u) => u.toString() !== loginPageUrl, {
+      timeout: 10_000,
+    });
+    urlChanged = true;
+    log.login(`Redirected to ${page.url()}`);
+  } catch {
+    log.warn('Login did not trigger a URL change — app may use SPA routing');
+  }
+
+  // Let the page finish loading after navigation
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 5_000 });
+  } catch {
+    // Non-fatal — page may have long-polling or streaming connections
+  }
+
+  // Fallback for SPA apps that don't change the URL
+  if (!urlChanged) {
+    await page.waitForTimeout(3_000);
   }
 }
 
 // ── Internal step executor (minimal, no artifacts) ──────────
 
 async function executeLoginStep(page: Page, step: Step): Promise<void> {
-  switch (step.type) {
-    case 'goto':
-      await page.goto(step.value, {
-        timeout: step.timeout ?? TIMEOUTS.NAVIGATION_TIMEOUT,
-        waitUntil: 'domcontentloaded',
-      });
-      break;
+  try {
+    switch (step.type) {
+      case 'goto':
+        await page.goto(step.value, {
+          timeout: step.timeout ?? TIMEOUTS.NAVIGATION_TIMEOUT,
+          waitUntil: 'domcontentloaded',
+        });
+        break;
 
-    case 'click': {
-      const loc = resolveSelector(page, step.selector);
-      await loc.click({ timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT });
-      break;
-    }
-
-    case 'type': {
-      const loc = resolveSelector(page, step.selector);
-      await loc.fill(step.value, {
-        timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
-      });
-      break;
-    }
-
-    case 'select': {
-      const loc = resolveSelector(page, step.selector);
-      await loc.selectOption(step.value, {
-        timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
-      });
-      break;
-    }
-
-    case 'upload': {
-      const loc = resolveSelector(page, step.selector);
-      await loc.setInputFiles(step.value, {
-        timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
-      });
-      break;
-    }
-
-    case 'wait':
-      if (step.selector) {
+      case 'click': {
         const loc = resolveSelector(page, step.selector);
-        await loc.waitFor({
-          state: 'visible',
+        await loc.click({ timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT });
+        break;
+      }
+
+      case 'type': {
+        const loc = resolveSelector(page, step.selector);
+        await loc.fill(step.value, {
           timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
         });
-      } else if (step.value) {
-        const ms = Number(step.value);
-        if (!Number.isNaN(ms)) await page.waitForTimeout(ms);
+        break;
       }
-      break;
 
-    case 'expect_text': {
-      const timeout = step.timeout ?? TIMEOUTS.ACTION_TIMEOUT;
-      const loc = step.selector
-        ? resolveSelector(page, step.selector)
-        : page.locator('body');
-      await loc.waitFor({ state: 'visible', timeout });
-      const text = await loc.innerText();
-      if (!text.includes(step.value)) {
-        throw new Error(
-          `Login flow: expected text "${step.value}" not found`,
-        );
+      case 'select': {
+        const loc = resolveSelector(page, step.selector);
+        await loc.selectOption(step.value, {
+          timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
+        });
+        break;
       }
-      break;
+
+      case 'upload': {
+        const loc = resolveSelector(page, step.selector);
+        await loc.setInputFiles(step.value, {
+          timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
+        });
+        break;
+      }
+
+      case 'wait':
+        if (step.selector) {
+          const loc = resolveSelector(page, step.selector);
+          await loc.waitFor({
+            state: 'visible',
+            timeout: step.timeout ?? TIMEOUTS.ACTION_TIMEOUT,
+          });
+        } else if (step.value) {
+          const ms = Number(step.value);
+          if (!Number.isNaN(ms)) await page.waitForTimeout(ms);
+        }
+        break;
+
+      case 'expect_text': {
+        const timeout = step.timeout ?? TIMEOUTS.ACTION_TIMEOUT;
+        const loc = step.selector
+          ? resolveSelector(page, step.selector)
+          : page.locator('body');
+        await loc.waitFor({ state: 'visible', timeout });
+        const text = await loc.innerText();
+        if (!text.includes(step.value)) {
+          throw new Error(
+            `Login flow: expected text "${step.value}" not found`,
+          );
+        }
+        break;
+      }
     }
+  } catch (err) {
+    // Take a screenshot to show the state at the point of failure
+    try {
+      await page.screenshot({
+        path: `login-step-failure-${step.type}.png`,
+        fullPage: true,
+      });
+    } catch {
+      // Browser may be in a bad state
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+    const currentUrl = page.url();
+    throw new Error(
+      `Login step "${step.type}: ${step.description}" failed at ${currentUrl}: ${message}`,
+    );
   }
 }
