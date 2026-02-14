@@ -35,6 +35,7 @@ The step object follows this format:
 | select       | selector, value (option value)                          |
 | wait         | value (ms as string)                                    |
 | expect_text  | value (text to find), selector (optional)               |
+| press_key    | value (key name, e.g. "Enter", "Tab", "Escape")        |
 
 Selector format (ONLY these strategies):
 - {"strategy": "testid", "value": "submit-btn"}
@@ -48,6 +49,31 @@ If you want to select by name, use: {"strategy": "css", "value": "input[name='em
 DO NOT use "goto" — the browser is already on the page.
 DO NOT output anything except the JSON object.
 DO NOT plan ahead — just the ONE next action.
+
+## Understanding UI States
+
+You can see both the screenshot and the element list. Use both to understand what's happening:
+
+- If a button text changed (e.g. "Submit" → "Submit..." or "Submitting"), it's in a LOADING state. Do NOT click it again. Wait instead.
+- If an element shows DISABLED or BUSY, it's processing something. Wait for it to become active.
+- If you see a spinner, skeleton loader, or "loading" text, wait before taking the next action.
+- If the page content changed significantly after your last action (new elements appeared, old ones disappeared), your action likely succeeded — observe and decide what's next.
+- If nothing changed after your action, it might have failed. Try a different approach.
+- Compare the current screenshot to what you expect. Trust what you SEE, not what you assume.
+
+When waiting, use: {"done": false, "action": {"type": "wait", "value": "2000", "description": "Button in loading state, waiting for response"}}
+
+## Recognizing Completed Actions
+
+Look at the FULL page context, not just individual elements:
+- If the page content is completely different from before your action (e.g., you were on a login form and now you see a dashboard/chat/app), your action SUCCEEDED. Move on to the next goal or respond with {"done": true, "summary": "..."}.
+- Compare the number and type of elements: if you suddenly see navigation menus, chat inputs, or app content that wasn't there before, the transition happened.
+- Do NOT keep clicking a button that already worked. If the page changed, move on.
+
+## Tips for common UI patterns
+- Chat inputs: Type the message, then press Enter to send. This is often more reliable than finding and clicking a send button.
+- Icon buttons (no text): Use css strategy with a more specific selector like "button[aria-label='Send']" or "button svg" or the parent container.
+- If clicking a button fails repeatedly, try pressing Enter instead — most form and chat inputs support Enter to submit.
 
 CRITICAL RULES:
 1. Every action MUST have a "description" field explaining what you're doing and why.

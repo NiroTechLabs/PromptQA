@@ -11,6 +11,10 @@ export const interactiveElementSchema = z.object({
   placeholder: z.string().optional(),
   href: z.string().optional(),
   options: z.array(z.string()).optional(),
+  disabled: z.boolean().optional(),
+  ariaBusy: z.string().optional(),
+  classList: z.string().optional(),
+  readOnly: z.boolean().optional(),
 });
 
 export type InteractiveElement = z.infer<typeof interactiveElementSchema>;

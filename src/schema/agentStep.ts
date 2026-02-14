@@ -10,6 +10,7 @@ const agentStepTypeSchema = z.enum([
   'select',
   'wait',
   'expect_text',
+  'press_key',
 ]);
 
 export type AgentStepType = z.infer<typeof agentStepTypeSchema>;
@@ -53,12 +54,19 @@ const agentExpectTextStepSchema = z.object({
   value: z.string().min(1),
 });
 
+const agentPressKeyStepSchema = z.object({
+  ...baseFields,
+  type: z.literal('press_key'),
+  value: z.string().min(1),
+});
+
 export const agentActionStepSchema = z.discriminatedUnion('type', [
   agentClickStepSchema,
   agentTypeStepSchema,
   agentSelectStepSchema,
   agentWaitStepSchema,
   agentExpectTextStepSchema,
+  agentPressKeyStepSchema,
 ]);
 
 export type AgentActionStep = z.infer<typeof agentActionStepSchema>;
@@ -102,4 +110,6 @@ export interface ActionHistoryEntry {
   description: string;
   success: boolean;
   observation: string;
+  elementCountBefore?: number;
+  elementCountAfter?: number;
 }

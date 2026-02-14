@@ -205,5 +205,7 @@ function describeExpected(sr: StepExecutionResult): string {
         : `Wait ${sr.step.value ?? 'unspecified'} ms`;
     case 'expect_text':
       return `Expect text "${sr.step.value}" to be visible`;
+    case 'press_key':
+      return `Press key "${sr.step.value}"`;
   }
 }

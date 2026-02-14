@@ -25,6 +25,7 @@ export const stepTypeSchema = z.enum([
   'upload',
   'wait',
   'expect_text',
+  'press_key',
 ]);
 
 export type StepType = z.infer<typeof stepTypeSchema>;
@@ -83,6 +84,12 @@ export const expectTextStepSchema = z.object({
   value: z.string().min(1),
 });
 
+export const pressKeyStepSchema = z.object({
+  ...baseFields,
+  type: z.literal('press_key'),
+  value: z.string().min(1),
+});
+
 // ── Union schema ──────────────────────────────────────────────
 
 export const stepSchema = z.discriminatedUnion('type', [
@@ -93,6 +100,7 @@ export const stepSchema = z.discriminatedUnion('type', [
   uploadStepSchema,
   waitStepSchema,
   expectTextStepSchema,
+  pressKeyStepSchema,
 ]);
 
 export type Step = z.infer<typeof stepSchema>;
@@ -105,6 +113,7 @@ export type SelectStep = z.infer<typeof selectStepSchema>;
 export type UploadStep = z.infer<typeof uploadStepSchema>;
 export type WaitStep = z.infer<typeof waitStepSchema>;
 export type ExpectTextStep = z.infer<typeof expectTextStepSchema>;
+export type PressKeyStep = z.infer<typeof pressKeyStepSchema>;
 
 // ── List schema ───────────────────────────────────────────────
 
@@ -149,4 +158,8 @@ export function isWaitStep(step: Step): step is WaitStep {
 
 export function isExpectTextStep(step: Step): step is ExpectTextStep {
   return step.type === 'expect_text';
+}
+
+export function isPressKeyStep(step: Step): step is PressKeyStep {
+  return step.type === 'press_key';
 }

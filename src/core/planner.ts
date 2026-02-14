@@ -257,5 +257,13 @@ function formatElement(el: PageSnapshot['elements'][number]): string {
     parts.push(`options=[${el.options.join(', ')}]`);
   }
 
+  // UI state flags
+  if (el.disabled) parts.push('DISABLED');
+  if (el.ariaBusy) parts.push('BUSY');
+  if (el.readOnly) parts.push('READONLY');
+  if (el.classList && /loading|disabled|opacity/i.test(el.classList)) {
+    parts.push(`class="${el.classList}"`);
+  }
+
   return parts.join(' ');
 }

@@ -21,6 +21,42 @@ const chatResponseSchema = z.object({
     .nonempty(),
 });
 
+// ── Rate-limit-aware fetch ───────────────────────────────────
+
+const MAX_RETRIES = 3;
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const response = await fetch(url, init);
+
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('retry-after');
+      const waitMs = retryAfter
+        ? parseFloat(retryAfter) * 1000
+        : (attempt + 1) * 5000;
+      console.error(
+        `[llm] Rate limited, waiting ${String(Math.round(waitMs / 1000))}s...`,
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `OpenAI API error (${String(response.status)}): ${body}`,
+      );
+    }
+
+    return response;
+  }
+
+  throw new Error('OpenAI API: max retries exceeded due to rate limiting');
+}
+
 // ── Provider factory ─────────────────────────────────────────
 
 export function createOpenAIClient(
@@ -31,7 +67,7 @@ export function createOpenAIClient(
 
   return {
     async generate(systemPrompt: string, userPrompt: string): Promise<string> {
-      const response = await fetch(COMPLETIONS_URL, {
+      const response = await fetchWithRetry(COMPLETIONS_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -46,13 +82,6 @@ export function createOpenAIClient(
           temperature: 0,
         }),
       });
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(
-          `OpenAI API error (${String(response.status)}): ${body}`,
-        );
-      }
 
       const raw = await response.text();
       const body: unknown = JSON.parse(raw);
@@ -69,7 +98,7 @@ export function createOpenAIClient(
     ): Promise<string> {
       const dataUri = `data:${mimeType};base64,${imageBase64}`;
 
-      const response = await fetch(COMPLETIONS_URL, {
+      const response = await fetchWithRetry(COMPLETIONS_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -96,13 +125,6 @@ export function createOpenAIClient(
           temperature: 0,
         }),
       });
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(
-          `OpenAI API error (${String(response.status)}): ${body}`,
-        );
-      }
 
       const raw = await response.text();
       const body: unknown = JSON.parse(raw);

@@ -166,6 +166,12 @@ async function performAction(page: Page, step: Step): Promise<void> {
       }
       break;
     }
+
+    case 'press_key': {
+      log.detail(`press_key → "${step.value}"`);
+      await page.keyboard.press(step.value);
+      break;
+    }
   }
 }
 

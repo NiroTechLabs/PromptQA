@@ -163,6 +163,9 @@ function extractFromDOM(): {
       text: textOf(el),
       testId: attr(el, 'data-testid'),
       name: attr(el, 'name'),
+      disabled: (el as HTMLButtonElement).disabled || undefined,
+      ariaBusy: attr(el, 'aria-busy') || undefined,
+      classList: el.className || undefined,
     });
   });
 
@@ -185,6 +188,8 @@ function extractFromDOM(): {
       testId: attr(el, 'data-testid'),
       name: attr(el, 'name'),
       placeholder: attr(el, 'placeholder'),
+      disabled: el.disabled || undefined,
+      readOnly: el.readOnly || undefined,
     });
   });
 

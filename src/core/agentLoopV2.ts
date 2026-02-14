@@ -120,35 +120,83 @@ function fixupRawAction(parsed: unknown): unknown {
   return parsed;
 }
 
-// ── JSON extraction ─────────────────────────────────────────
+// ── JSON sanitization + extraction ──────────────────────────
 
-function extractJSON(raw: string): string {
-  const fenced = /```(?:json)?\s*\n?([\s\S]*?)```/.exec(raw);
-  if (fenced?.[1]) return fenced[1].trim();
+function sanitizeJSON(raw: string): string {
+  // Strip markdown fences
+  let clean = raw.replace(/```(?:json)?\s*/g, '').replace(/```/g, '').trim();
 
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start !== -1 && end > start) return raw.slice(start, end + 1);
+  // Fix CSS selector quote corruption the LLM sometimes produces
+  // e.g. 'value'"] → 'value']"  and  'value']}" → 'value']}"
+  clean = clean.replace(/'"\]/g, "']");
 
-  return raw.trim();
+  // Find the outermost JSON object
+  const start = clean.indexOf('{');
+  if (start === -1) return clean;
+
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < clean.length; i++) {
+    if (clean[i] === '{') depth++;
+    if (clean[i] === '}') depth--;
+    if (depth === 0) { end = i; break; }
+  }
+
+  if (end === -1) {
+    // Incomplete JSON — try to close it
+    clean = clean.slice(start) + '}'.repeat(depth);
+  } else {
+    clean = clean.slice(start, end + 1);
+  }
+
+  return clean;
 }
 
-// ── Element formatting (same as planner) ────────────────────
+// ── Element formatting (compact — reduces tokens per call) ──
 
 function formatElement(el: PageSnapshot['elements'][number]): string {
-  const parts = [`<${el.tag}`];
+  // Compact format: "button: 'Anmelden' [DISABLED]"
+  //                 "input[placeholder='E-Mail'] type=email"
+  //                 "a: 'Registrieren' href=/register"
 
-  if (el.type) parts.push(`type="${el.type}"`);
-  if (el.testId) parts.push(`data-testid="${el.testId}"`);
-  if (el.name) parts.push(`name="${el.name}"`);
-  if (el.placeholder) parts.push(`placeholder="${el.placeholder}"`);
-  if (el.href) parts.push(`href="${el.href}"`);
+  const tag = el.tag;
+  const parts: string[] = [];
 
-  parts.push('>');
+  // Tag + primary identifier
+  if (el.testId) {
+    parts.push(`${tag}[data-testid="${el.testId}"]`);
+  } else if (el.placeholder) {
+    parts.push(`${tag}[placeholder='${el.placeholder}']`);
+  } else if (el.name) {
+    parts.push(`${tag}[name='${el.name}']`);
+  } else {
+    parts.push(tag);
+  }
 
-  if (el.text) parts.push(el.text);
+  // Type for inputs
+  if (el.type) parts.push(`type=${el.type}`);
+
+  // Display text
+  if (el.text) parts.push(`'${el.text}'`);
+
+  // Href for links (truncated)
+  if (el.href) {
+    const short = el.href.length > 40 ? el.href.slice(0, 40) + '...' : el.href;
+    parts.push(`href=${short}`);
+  }
+
+  // Options for selects (abbreviated)
   if (el.options && el.options.length > 0) {
-    parts.push(`options=[${el.options.join(', ')}]`);
+    const optStr = el.options.slice(0, 5).join('|');
+    parts.push(`opts=[${optStr}${el.options.length > 5 ? '|...' : ''}]`);
+  }
+
+  // UI state flags
+  if (el.disabled) parts.push('[DISABLED]');
+  if (el.ariaBusy) parts.push('[BUSY]');
+  if (el.readOnly) parts.push('[READONLY]');
+  if (el.classList && /loading|disabled|opacity/i.test(el.classList)) {
+    parts.push(`[class=${el.classList}]`);
   }
 
   return parts.join(' ');
@@ -162,7 +210,11 @@ function formatHistory(history: readonly ActionHistoryEntry[]): string {
   return history
     .map((entry) => {
       const icon = entry.success ? '\u2713' : '\u2717';
-      return `${String(entry.stepIndex + 1)}. [${entry.action}] ${entry.description} \u2192 ${icon} ${entry.observation}`;
+      let line = `${String(entry.stepIndex + 1)}. [${entry.action}] ${entry.description} \u2192 ${icon} ${entry.observation}`;
+      if (entry.elementCountAfter != null && entry.elementCountBefore != null) {
+        line += ` (page now has ${String(entry.elementCountAfter)} interactive elements, was ${String(entry.elementCountBefore)})`;
+      }
+      return line;
     })
     .join('\n');
 }
@@ -173,6 +225,7 @@ async function buildStepPrompt(
   goal: string,
   snapshot: PageSnapshot,
   history: readonly ActionHistoryEntry[],
+  stuckHint: string = '',
 ): Promise<string> {
   const template = await readFile(
     path.join(PROMPTS_DIR, 'agent_step.txt'),
@@ -183,13 +236,15 @@ async function buildStepPrompt(
     .map((el) => formatElement(el))
     .join('\n');
 
-  return template
+  const prompt = template
     .replace('{{goal}}', goal)
     .replace('{{url}}', snapshot.url)
     .replace('{{title}}', snapshot.title)
     .replace('{{visibleText}}', snapshot.visibleText.slice(0, TOKEN_GUARDS.MAX_VISIBLE_TEXT_CHARS))
     .replace('{{elements}}', elementsText)
     .replace('{{history}}', formatHistory(history));
+
+  return prompt + stuckHint;
 }
 
 async function buildFinalPrompt(
@@ -217,8 +272,9 @@ async function decideNextStep(
   snapshot: PageSnapshot,
   screenshotBase64: string | undefined,
   history: readonly ActionHistoryEntry[],
+  stuckHint: string = '',
 ): Promise<AgentStepResponse> {
-  const prompt = await buildStepPrompt(goal, snapshot, history);
+  const prompt = await buildStepPrompt(goal, snapshot, history, stuckHint);
 
   let raw: string;
   if (screenshotBase64 && client.generateWithImage) {
@@ -227,7 +283,7 @@ async function decideNextStep(
     raw = await client.generate(prompt, goal);
   }
 
-  const json = extractJSON(raw);
+  const json = sanitizeJSON(raw);
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -262,7 +318,7 @@ async function runFinalEvaluation(
     raw = await client.generate(prompt, goal);
   }
 
-  const json = extractJSON(raw);
+  const json = sanitizeJSON(raw);
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -313,6 +369,8 @@ function describeAction(step: Step): string {
         : `wait ${step.value ?? '?'}ms`;
     case 'expect_text':
       return `expect_text "${step.value}"`;
+    case 'press_key':
+      return `press_key "${step.value}"`;
     default:
       return `${step.type}`;
   }
@@ -425,12 +483,35 @@ async function runSubLoop(config: SubLoopConfig): Promise<SubLoopResult> {
       // Non-fatal
     }
 
+    // ── DETECT STUCK ────────────────────────────────────
+    // Check for repeated identical failures
+    const recentHistory = history.slice(-2);
+    const isStuck = recentHistory.length === 2
+      && recentHistory.every(h => !h.success)
+      && recentHistory[0]!.action === recentHistory[1]!.action;
+
+    let stuckHint = '';
+    if (isStuck) {
+      stuckHint = `\n\nWARNING: You have tried "${recentHistory[0]!.action}" twice and it failed both times. You MUST try a completely different approach. Use a different selector strategy, a different element, or try pressing Enter instead of clicking. Do NOT repeat the same action.\n`;
+    }
+
+    // Hard limit: if the same action has failed 3 times in a row, skip it
+    const recentThree = history.slice(-3);
+    const isHardStuck = recentThree.length === 3
+      && recentThree.every(h => !h.success)
+      && recentThree.every(h => h.action === recentThree[0]!.action);
+
+    if (isHardStuck) {
+      log.warn(`Action "${recentThree[0]!.action}" failed 3 times in a row — skipping and forcing new approach`);
+      stuckHint = `\n\nCRITICAL: The action "${recentThree[0]!.action}" has failed 3 times consecutively. This action is now BLOCKED. You MUST choose a completely different action type or selector. Consider using press_key with "Enter" or "Tab", or try a different element entirely.\n`;
+    }
+
     // ── DECIDE ───────────────────────────────────────────
     log.llm(`Agent deciding step ${String(i + 1)}/${String(maxSteps)}...`);
 
     let decision: AgentStepResponse;
     try {
-      decision = await decideNextStep(client, goal, snapshot, screenshotBase64, history);
+      decision = await decideNextStep(client, goal, snapshot, screenshotBase64, history, stuckHint);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error(`Agent decision failed: ${msg}`);
@@ -454,6 +535,20 @@ async function runSubLoop(config: SubLoopConfig): Promise<SubLoopResult> {
     // ── ACT ──────────────────────────────────────────────
     const step = toStep(decision);
     const actionStr = describeAction(step);
+
+    // Hard limit enforcement: skip if same action is still being repeated
+    if (isHardStuck && actionStr === recentThree[0]!.action) {
+      log.warn(`Agent repeated blocked action "${actionStr}" — skipping step`);
+      history.push({
+        stepIndex: i,
+        action: actionStr,
+        description: step.description,
+        success: false,
+        observation: 'Blocked: same action failed 3 times consecutively',
+      });
+      continue;
+    }
+
     log.step(stepIndex, stepOffset + maxSteps, step.description);
 
     let result: StepExecutionResult;
@@ -486,7 +581,20 @@ async function runSubLoop(config: SubLoopConfig): Promise<SubLoopResult> {
       };
     }
 
+    // Give the SPA time to react before recording
+    await session.page.waitForTimeout(1_000);
+
     // ── RECORD ───────────────────────────────────────────
+    const elementCountBefore = snapshot.elements.length;
+    let elementCountAfter = elementCountBefore;
+    try {
+      elementCountAfter = await session.page.evaluate(() =>
+        document.querySelectorAll('button, [role="button"], a[href], input, select, textarea').length,
+      );
+    } catch {
+      // Non-fatal — keep the before count as fallback
+    }
+
     const observation = result.success
       ? `Page at ${result.url}${result.visibleText.length > 0 ? ` — text starts: "${result.visibleText.slice(0, 80)}..."` : ''}`
       : `Failed — ${result.capture.pageErrors[0]?.message ?? 'element not found or action failed'}`;
@@ -497,6 +605,8 @@ async function runSubLoop(config: SubLoopConfig): Promise<SubLoopResult> {
       description: step.description,
       success: result.success,
       observation,
+      elementCountBefore,
+      elementCountAfter,
     });
 
     log.stepResult(stepIndex, stepOffset + maxSteps, result.success, step.description);
