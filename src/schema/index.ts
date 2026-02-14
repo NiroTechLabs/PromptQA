@@ -10,3 +10,4 @@ export * from './results.js';
 export * from './prescan.js';
 export * from './config.js';
 export * from './jsonOutput.js';
+export * from './agentStep.js';

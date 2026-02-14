@@ -39,7 +39,7 @@ export function resolveSelector(page: Page, hint: SelectorHint): Locator {
       return resolveRole(page, hint);
 
     case 'text':
-      return page.getByText(hint.value);
+      return page.getByText(hint.value, { exact: true });
 
     case 'css':
       return page.locator(hint.value);

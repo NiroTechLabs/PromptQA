@@ -1,0 +1,25 @@
+You are evaluating a web application test.
+
+## Test Goal
+{{goal}}
+
+## Action History
+{{history}}
+
+## Final Page State
+URL: {{url}}
+Visible text:
+{{visibleText}}
+
+A screenshot of the final page state is attached.
+
+## Task
+
+Based on the action history and final page state, determine if the test goal was achieved.
+
+Respond with ONLY a JSON object:
+{
+  "result": "PASS" | "FAIL" | "UNCERTAIN",
+  "confidence": 0.0 to 1.0,
+  "reason": "Brief explanation of what was verified or what went wrong"
+}

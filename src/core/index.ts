@@ -10,3 +10,5 @@ export { evaluateStep, detectHardFail } from './evaluator.js';
 export type { EvaluatorInput } from './evaluator.js';
 export { runAgentLoop } from './agentLoop.js';
 export type { AgentLoopConfig, AgentLoopResult } from './agentLoop.js';
+export { runAgentLoopV2 } from './agentLoopV2.js';
+export type { AgentLoopV2Config, AgentLoopV2Result } from './agentLoopV2.js';

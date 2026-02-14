@@ -33,6 +33,73 @@ export class PlannerError extends Error {
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = path.join(THIS_DIR, '..', '..', 'prompts');
 
+// ── Pre-validation fixups ────────────────────────────────────
+// The LLM sometimes invents strategies like "placeholder" or "name".
+// Convert these to valid CSS selectors before Zod validation.
+
+function fixupRawSteps(parsed: unknown): unknown {
+  if (!Array.isArray(parsed)) return parsed;
+
+  for (const step of parsed) {
+    if (typeof step !== 'object' || step === null) continue;
+    const s = step as Record<string, unknown>;
+
+    // Fix missing description
+    if (!s['description'] && typeof s['type'] === 'string') {
+      s['description'] = `${s['type']} step`;
+    }
+
+    // Fix invalid selector strategies
+    const selector = s['selector'];
+    if (typeof selector === 'object' && selector !== null) {
+      const sel = selector as Record<string, unknown>;
+      const strategy = sel['strategy'];
+      const value = sel['value'];
+
+      if (typeof strategy === 'string' && typeof value === 'string') {
+        if (!['testid', 'role', 'text', 'css'].includes(strategy)) {
+          // Convert to CSS selector
+          switch (strategy) {
+            case 'placeholder':
+              sel['strategy'] = 'css';
+              sel['value'] = `input[placeholder='${value}']`;
+              break;
+            case 'name':
+              sel['strategy'] = 'css';
+              sel['value'] = `[name='${value}']`;
+              break;
+            case 'id':
+              sel['strategy'] = 'css';
+              sel['value'] = `#${value}`;
+              break;
+            case 'label':
+              sel['strategy'] = 'text';
+              break;
+            default:
+              sel['strategy'] = 'css';
+              sel['value'] = `[${strategy}='${value}']`;
+              break;
+          }
+        }
+      }
+    }
+
+    // Fix missing value on expect_text steps
+    if (s['type'] === 'expect_text' && !s['value']) {
+      // Try to extract from description
+      const desc = String(s['description'] ?? '');
+      const quoted = /"([^"]+)"/.exec(desc) ?? /'([^']+)'/.exec(desc);
+      if (quoted?.[1]) {
+        s['value'] = quoted[1];
+      } else {
+        s['value'] = desc.slice(0, 50) || 'page content';
+      }
+    }
+  }
+
+  return parsed;
+}
+
 // ── Main entry ───────────────────────────────────────────────
 
 export async function planSteps(
@@ -135,6 +202,8 @@ function tryParse(raw: string): ParseResult {
     const message = e instanceof Error ? e.message : String(e);
     return { ok: false, error: `Invalid JSON: ${message}` };
   }
+
+  parsed = fixupRawSteps(parsed);
 
   const result = stepListSchema.safeParse(parsed);
   if (!result.success) {

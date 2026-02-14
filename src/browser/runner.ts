@@ -95,13 +95,22 @@ export async function launchSession(
 
 async function performAction(page: Page, step: Step): Promise<void> {
   switch (step.type) {
-    case 'goto':
+    case 'goto': {
+      // Skip navigation if we're already on the target URL
+      // (preserves auth state after login)
+      const currentUrl = page.url().replace(/\/$/, '');
+      const targetUrl = step.value.replace(/\/$/, '');
+      if (currentUrl === targetUrl) {
+        log.detail(`goto → ${step.value} (skipped — already on page)`);
+        break;
+      }
       log.detail(`goto → ${step.value}`);
       await page.goto(step.value, {
         timeout: step.timeout ?? TIMEOUTS.NAVIGATION_TIMEOUT,
         waitUntil: 'domcontentloaded',
       });
       break;
+    }
 
     case 'click': {
       log.detail(`click → ${step.selector.strategy}="${step.selector.value}"`);

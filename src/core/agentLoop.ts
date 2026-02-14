@@ -204,17 +204,43 @@ export async function runAgentLoop(
           screenshotBase64,
         });
         for (let i = 0; i < loginSteps.length; i++) {
-          log.step(i, loginSteps.length, loginSteps[i]!.description);
-          await session.executeStep(loginSteps[i]!, i);
+          const loginStep = loginSteps[i]!;
+          log.step(i, loginSteps.length, loginStep.description);
+          const result = await session.executeStep(loginStep, i);
+          if (!result.success) {
+            log.error(`Login step failed: ${loginStep.description}`);
+            throw new Error(`Login step ${String(i + 1)} failed: ${loginStep.description}`);
+          }
         }
         log.login('Login flow complete');
-        // Give the page time to settle after login before re-scanning
         log.info('Waiting for page to settle after login...');
+
+        // Wait for login form to disappear (SPA-aware)
+        try {
+          await session.page.waitForFunction(
+            () => {
+              const buttons = document.querySelectorAll('button');
+              for (const btn of buttons) {
+                if (btn.textContent?.trim() === 'Anmelden' && btn.offsetParent !== null) {
+                  return false;
+                }
+              }
+              return true;
+            },
+            { timeout: 10_000 },
+          );
+          log.login('Login form disappeared — auth successful');
+        } catch {
+          log.warn('Login button still visible after 10s — login may have failed');
+        }
+
+        // Let the app finish rendering
         try {
           await session.page.waitForLoadState('networkidle', { timeout: 5_000 });
         } catch {
-          // Non-fatal — page may have long-polling or streaming connections
+          // Non-fatal
         }
+
         // Re-scan after login — without navigating, to preserve auth state
         snapshot = await prescanCurrentPage(session.page);
         log.prescan(snapshot.elements.length, session.page.url());

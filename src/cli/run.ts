@@ -9,6 +9,7 @@ import type { CookieParam } from '../browser/runner.js';
 import { createLLMClient, loadLLMConfig } from '../llm/index.js';
 import type { LLMConfig } from '../llm/index.js';
 import { runAgentLoop } from '../core/agentLoop.js';
+import { runAgentLoopV2 } from '../core/agentLoopV2.js';
 import { generateMarkdown, generateJSON, serializeJSON } from '../report/reporter.js';
 import { LIMITS, TIMEOUTS } from '../config/defaults.js';
 import { loadConfigFile as loadValidatedConfig } from '../config/loader.js';
@@ -117,6 +118,7 @@ export function registerTestCommand(program: Command): void {
       '--login-prompt <prompt>',
       'Login prompt to execute before test',
     )
+    .option('--v2', 'Use V2 observe-decide-act agent loop')
     .action(
       async (
         url: string,
@@ -130,6 +132,7 @@ export function registerTestCommand(program: Command): void {
           config: string;
           cookie?: string;
           loginPrompt?: string;
+          v2?: true;
         },
       ) => {
         // Resolve report path early so it's available in the catch block
@@ -164,7 +167,7 @@ export function registerTestCommand(program: Command): void {
 
           // 5. Run agent loop
           const outputDir = path.resolve(resolvedReportPath);
-          const { summary, exitCode } = await runAgentLoop(client, {
+          const loopConfig = {
             url,
             prompt,
             headless,
@@ -173,7 +176,10 @@ export function registerTestCommand(program: Command): void {
             totalTimeout: timeoutSec * 1000,
             ...(cookies !== undefined ? { cookies } : {}),
             ...(loginPrompt !== undefined ? { loginPrompt } : {}),
-          });
+          };
+          const { summary, exitCode } = opts.v2
+            ? await runAgentLoopV2(client, loopConfig)
+            : await runAgentLoop(client, loopConfig);
 
           // 6. Write markdown report
           const markdown = generateMarkdown(summary);
@@ -246,6 +252,7 @@ export function registerRunCommand(program: Command): void {
       '--login-prompt <prompt>',
       'Login prompt to execute before test',
     )
+    .option('--v2', 'Use V2 observe-decide-act agent loop')
     .action(
       async (opts: {
         config: string;
@@ -257,6 +264,7 @@ export function registerRunCommand(program: Command): void {
         timeout?: string;
         cookie?: string;
         loginPrompt?: string;
+        v2?: true;
       }) => {
         let config: ValidatedFileConfig;
         try {
@@ -322,7 +330,7 @@ export function registerRunCommand(program: Command): void {
           process.stderr.write(`\nRunning test: ${test.name}\n`);
 
           try {
-            const { summary, exitCode } = await runAgentLoop(client, {
+            const loopConfig = {
               url: testUrl,
               prompt: test.prompt,
               headless,
@@ -331,7 +339,10 @@ export function registerRunCommand(program: Command): void {
               totalTimeout: timeoutSec * 1000,
               ...(cookies !== undefined ? { cookies } : {}),
               ...(loginPrompt !== undefined ? { loginPrompt } : {}),
-            });
+            };
+            const { summary, exitCode } = opts.v2
+              ? await runAgentLoopV2(client, loopConfig)
+              : await runAgentLoop(client, loopConfig);
 
             // Write markdown report
             const markdown = generateMarkdown(summary);
